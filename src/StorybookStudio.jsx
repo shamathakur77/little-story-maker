@@ -75,11 +75,28 @@ const GIFT_DEFAULT = {
   dedication: "",
 };
 
-// ── Decorative illustration (inline SVG, no fetch, instant) ──────
-// One reusable component used on every page.
-// seed drives which arrangement of elements renders -- same book = same look.
-// artStyle drives the colour palette.
+// ── Illustration system ───────────────────────────────────────────
+// 6 real PNG scenes in /public/. Keyword match on topic + page text.
+// SVG decorative fallback kept for any unmatched page.
 
+const SCENE_MAP = {
+  'brushing-teeth': ['brush','teeth','tooth','tand','borste','tandborste'],
+  'bath-time':      ['bath','bubble','wash','bad','bubbla','soap','tvätta'],
+  'bedtime':        ['bed','sleep','night','moon','sova','natt','tired','trött'],
+  'vegetables':     ['vegetable','broccoli','carrot','eat','grönsak','pea','morot'],
+  'sharing':        ['share','friend','together','dela','kompis','toy','leksak'],
+  'family-hug':     ['hug','family','love','mum','dad','mama','pappa','familj','kram'],
+};
+
+function getIllustration(topic = '', pageText = '') {
+  const haystack = (topic + ' ' + pageText).toLowerCase();
+  for (const [scene, keywords] of Object.entries(SCENE_MAP)) {
+    if (keywords.some(kw => haystack.includes(kw))) return scene;
+  }
+  return null; // no match -- use SVG fallback
+}
+
+// SVG fallback -- kept intact, used when no keyword matches
 const PALETTES = {
   "Bold flat vector":      { sky:"#74B9FF", ground:"#55EFC4", sun:"#FDCB6E", star1:"#FF6B6B", star2:"#A29BFE", star3:"#FF9F43", cloud:"#ffffff", rainbow:["#FF6B6B","#FF9F43","#FDCB6E","#55EFC4","#74B9FF","#A29BFE"], stroke:"#1a1a2e", sw:3 },
   "Watercolour":           { sky:"#B8DEF5", ground:"#C8EAB5", sun:"#FDE8C8", star1:"#F8B4B4", star2:"#D4B8F5", star3:"#FAD4A0", cloud:"#fefefe", rainbow:["#F8B4B4","#FAD4A0","#FDE8C8","#C8EAB5","#B8DEF5","#D4B8F5"], stroke:"#6b7c8d", sw:2 },
@@ -99,7 +116,6 @@ function getPalette(artStyle) {
   return PALETTES[artStyle] || DEFAULT_PALETTE;
 }
 
-// Tiny seeded pseudo-random -- same seed always gives same layout variation
 function seededRand(seed, index) {
   const x = Math.sin(seed * 9301 + index * 49297 + 233720) * 10000;
   return x - Math.floor(x);
@@ -108,8 +124,6 @@ function seededRand(seed, index) {
 function StoryIllustration({ seed = 1, artStyle = "Bold flat vector" }) {
   const p = getPalette(artStyle);
   const r = (i) => seededRand(seed, i);
-
-  // Star positions -- 5 stars scattered across upper area
   const stars = [
     { cx: 60 + r(0) * 40,  cy: 30 + r(1) * 30, r: 6 + r(2) * 5,  fill: p.star1 },
     { cx: 180 + r(3) * 40, cy: 20 + r(4) * 25, r: 8 + r(5) * 5,  fill: p.star2 },
@@ -117,110 +131,73 @@ function StoryIllustration({ seed = 1, artStyle = "Bold flat vector" }) {
     { cx: 430 + r(9) * 40, cy: 25 + r(10) * 25,r: 7 + r(11) * 4, fill: p.star1 },
     { cx: 540 + r(12)* 30, cy: 40 + r(13) * 25,r: 5 + r(14) * 5, fill: p.star2 },
   ];
-
-  // Rainbow arc -- centre shifts slightly per seed
   const rainbowCx = 280 + r(20) * 40;
   const rainbowCy = 340;
   const rainbowRadii = [220, 195, 170, 145, 120, 95];
-
-  // Cloud positions -- 2 clouds
   const clouds = [
     { cx: 100 + r(30) * 60, cy: 90 + r(31) * 20 },
     { cx: 420 + r(32) * 60, cy: 70 + r(33) * 20 },
   ];
-
-  // Moon -- upper right, slight position variation
   const moonCx = 520 + r(40) * 20;
   const moonCy = 55 + r(41) * 20;
-
   const sw = p.sw;
   const stroke = p.stroke;
-
   return (
-    <svg
-      viewBox="0 0 600 600"
-      xmlns="http://www.w3.org/2000/svg"
-      className="page-img"
-      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
-      aria-hidden="true"
-    >
-      {/* Sky background */}
+    <svg viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg"
+      className="page-img" style={{ position:"absolute", inset:0, width:"100%", height:"100%" }}
+      aria-hidden="true">
       <rect width="600" height="600" fill={p.sky} />
-
-      {/* Ground strip */}
       <ellipse cx="300" cy="620" rx="380" ry="120" fill={p.ground} />
-
-      {/* Sun */}
-      <circle cx={80 + r(50)*30} cy={80 + r(51)*20} r="52" fill={p.sun}
-        stroke={stroke} strokeWidth={sw} />
-      {/* Sun rays */}
+      <circle cx={80 + r(50)*30} cy={80 + r(51)*20} r="52" fill={p.sun} stroke={stroke} strokeWidth={sw} />
       {[0,45,90,135,180,225,270,315].map((angle, i) => {
         const rad = angle * Math.PI / 180;
         const x1 = (80 + r(50)*30) + Math.cos(rad)*58;
         const y1 = (80 + r(51)*20) + Math.sin(rad)*58;
         const x2 = (80 + r(50)*30) + Math.cos(rad)*72;
         const y2 = (80 + r(51)*20) + Math.sin(rad)*72;
-        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
-          stroke={p.sun} strokeWidth={sw+1} strokeLinecap="round" />;
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={p.sun} strokeWidth={sw+1} strokeLinecap="round" />;
       })}
-
-      {/* Moon */}
-      <circle cx={moonCx} cy={moonCy} r="30" fill={p.star3}
-        stroke={stroke} strokeWidth={sw} />
+      <circle cx={moonCx} cy={moonCy} r="30" fill={p.star3} stroke={stroke} strokeWidth={sw} />
       <circle cx={moonCx+12} cy={moonCy-6} r="22" fill={p.sky} />
-
-      {/* Rainbow arcs */}
       {rainbowRadii.map((rad, i) => (
-        <path key={i}
-          d={`M ${rainbowCx - rad} ${rainbowCy} A ${rad} ${rad} 0 0 1 ${rainbowCx + rad} ${rainbowCy}`}
-          fill="none" stroke={p.rainbow[i]} strokeWidth={14} strokeLinecap="round"
-          opacity="0.88"
-        />
+        <path key={i} d={`M ${rainbowCx - rad} ${rainbowCy} A ${rad} ${rad} 0 0 1 ${rainbowCx + rad} ${rainbowCy}`}
+          fill="none" stroke={p.rainbow[i]} strokeWidth={14} strokeLinecap="round" opacity="0.88" />
       ))}
-
-      {/* Clouds */}
       {clouds.map((c, i) => (
         <g key={i}>
-          <ellipse cx={c.cx}    cy={c.cy}    rx={38} ry={22} fill={p.cloud}
-            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
-          <ellipse cx={c.cx-24} cy={c.cy+6}  rx={26} ry={18} fill={p.cloud}
-            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
-          <ellipse cx={c.cx+24} cy={c.cy+6}  rx={26} ry={18} fill={p.cloud}
-            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+          <ellipse cx={c.cx}    cy={c.cy}   rx={38} ry={22} fill={p.cloud} stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+          <ellipse cx={c.cx-24} cy={c.cy+6} rx={26} ry={18} fill={p.cloud} stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+          <ellipse cx={c.cx+24} cy={c.cy+6} rx={26} ry={18} fill={p.cloud} stroke={stroke} strokeWidth={sw} opacity="0.92"/>
         </g>
       ))}
-
-      {/* Stars (4-pointed sparkle shape) */}
       {stars.map((s, i) => {
         const sr = s.r;
-        const pts = [
-          `${s.cx},${s.cy - sr}`,
-          `${s.cx + sr*0.3},${s.cy - sr*0.3}`,
-          `${s.cx + sr},${s.cy}`,
-          `${s.cx + sr*0.3},${s.cy + sr*0.3}`,
-          `${s.cx},${s.cy + sr}`,
-          `${s.cx - sr*0.3},${s.cy + sr*0.3}`,
-          `${s.cx - sr},${s.cy}`,
-          `${s.cx - sr*0.3},${s.cy - sr*0.3}`,
-        ].join(" ");
-        return (
-          <polygon key={i} points={pts} fill={s.fill}
-            stroke={stroke} strokeWidth={sw > 0 ? sw - 0.5 : 0}
-            strokeLinejoin="round" />
-        );
+        const pts = [`${s.cx},${s.cy-sr}`,`${s.cx+sr*0.3},${s.cy-sr*0.3}`,`${s.cx+sr},${s.cy}`,`${s.cx+sr*0.3},${s.cy+sr*0.3}`,`${s.cx},${s.cy+sr}`,`${s.cx-sr*0.3},${s.cy+sr*0.3}`,`${s.cx-sr},${s.cy}`,`${s.cx-sr*0.3},${s.cy-sr*0.3}`].join(" ");
+        return <polygon key={i} points={pts} fill={s.fill} stroke={stroke} strokeWidth={sw > 0 ? sw-0.5 : 0} strokeLinejoin="round" />;
       })}
-
-      {/* Small scatter dots for warmth -- bottom ground area */}
       {[0,1,2,3,4,5].map(i => (
-        <circle key={i}
-          cx={80 + r(60+i)*440} cy={520 + r(66+i)*50}
-          r={5 + r(72+i)*6}
-          fill={p.rainbow[i % 6]} opacity="0.7"
-          stroke={stroke} strokeWidth={sw > 0 ? 1 : 0}
-        />
+        <circle key={i} cx={80+r(60+i)*440} cy={520+r(66+i)*50} r={5+r(72+i)*6}
+          fill={p.rainbow[i%6]} opacity="0.7" stroke={stroke} strokeWidth={sw > 0 ? 1 : 0} />
       ))}
     </svg>
   );
+}
+
+// ── PageIllustration ──────────────────────────────────────────────
+// Tries keyword match first. Falls back to decorative SVG.
+function PageIllustration({ topic, pageText, seed, artStyle }) {
+  const scene = getIllustration(topic, pageText);
+  if (scene) {
+    return (
+      <img
+        src={`/${scene}.png`}
+        alt={scene.replace(/-/g, ' ')}
+        className="page-img"
+        style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+      />
+    );
+  }
+  return <StoryIllustration seed={seed} artStyle={artStyle} />;
 }
 
 export default function StorybookStudio() {
@@ -463,7 +440,12 @@ export default function StorybookStudio() {
 function CoverPage({ book, cfg, seed, print }) {
   return (
     <div className={`book-page cover-page ${print ? "print-page" : ""}`}>
-      <StoryIllustration seed={seed} artStyle={cfg.style} />
+      <PageIllustration
+        topic={cfg.lesson}
+        pageText={book.cover.subtitle || ''}
+        seed={seed}
+        artStyle={cfg.style}
+      />
       <div className="cover-overlay">
         <h2 className="cover-title">{book.title}</h2>
         {book.cover.subtitle && <p className="cover-sub">{book.cover.subtitle}</p>}
@@ -477,7 +459,12 @@ function StoryPage({ p, cfg, seed, n, print }) {
   const showStrip = cfg.nd.includes("schedule");
   return (
     <div className={`book-page ${print ? "print-page" : ""}`}>
-      <StoryIllustration seed={seed + n} artStyle={cfg.style} />
+      <PageIllustration
+        topic={cfg.lesson}
+        pageText={p.text || ''}
+        seed={seed + n}
+        artStyle={cfg.style}
+      />
       <div className="page-text-box">
         <p className="page-text">{p.text}</p>
         {showStrip && (
