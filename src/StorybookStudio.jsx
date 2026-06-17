@@ -1,4 +1,4 @@
-// STATE: v2 Feature 2 -- art style CSS filters on PNG illustrations
+// STATE: v2 Feature 1 -- scene library expanded to 24 scenes (built on top of Feature 2)
 // Repo: https://github.com/shamathakur77/little-story-maker
 // Do not touch: api/story.js, form inputs, Ko-fi footer, CSS layout
 import React, { useState, useRef, useEffect } from "react";
@@ -83,12 +83,33 @@ const GIFT_DEFAULT = {
 // SVG decorative fallback kept for any unmatched page.
 
 const SCENE_MAP = {
-  'brushing-teeth': ['brush','teeth','tooth','tand','borste','tandborste'],
-  'bath-time':      ['bath','bubble','wash','bad','bubbla','soap','tvätta'],
-  'bedtime':        ['bed','sleep','night','moon','sova','natt','tired','trött'],
-  'vegetables':     ['vegetable','broccoli','carrot','eat','grönsak','pea','morot'],
-  'sharing':        ['share','friend','together','dela','kompis','toy','leksak'],
-  'family-hug':     ['hug','family','love','mum','dad','mama','pappa','familj','kram'],
+  // ── Original 6 scenes ──────────────────────────────────────────
+  'brushing-teeth':  ['brush','teeth','tooth','tand','borste','tandborste'],
+  'bath-time':       ['bath','bubble','wash','bad','bubbla','soap','tvätta'],
+  'bedtime':         ['bed','sleep','night','moon','sova','natt','tired','trött'],
+  'vegetables':      ['vegetable','broccoli','carrot','eat','grönsak','pea','morot'],
+  'sharing':         ['share','friend','together','dela','kompis','toy','leksak'],
+  'family-hug':      ['hug','family','love','mum','dad','mama','pappa','familj','kram'],
+
+  // ── 18 new scenes (PNGs uploaded by developer to /public/) ─────
+  'potty-training':  ['potty','toilet','wee','poop','pee','toalett','kiss','bajs','blöja','nappy','diaper'],
+  'getting-dressed': ['dress','dressed','clothes','shirt','sock','shoe','klä','kläder','strumpa','sko','tröja','byxor'],
+  'washing-hands':   ['hand','wash','soap','rinse','tvätta','händer','tvål','skölja','handtvätt'],
+  'eating-breakfast':['breakfast','cereal','porridge','morgon','frukost','välling','havre','gröt','mjölk'],
+  'going-to-school': ['school','förskola','daycare','drop','backpack','ryggsäck','skola','dagis','lämna'],
+  'making-a-friend': ['friend','play','meet','vän','leka','möta','kompis','ny','hello','hej'],
+  'feeling-scared':  ['scared','fear','afraid','dark','monster','rädd','rädsla','mörker','otäck','oro'],
+  'feeling-angry':   ['angry','anger','mad','tantrum','scream','arg','ilska','gråt','skriker','ledsen'],
+  'feeling-happy':   ['happy','joy','smile','laugh','glad','glädje','skratta','lycklig','hurra','yay'],
+  'tidying-up':      ['tidy','clean','put away','toy','städa','städning','leksak','plocka','undan','ordning'],
+  'reading-a-book':  ['book','read','story','page','bok','läsa','saga','sida','berättelse','bibliotek'],
+  'playing-outside': ['outside','park','play','garden','run','ute','leka','park','löpa','gunga','lekplats'],
+  'rainy-day':       ['rain','puddle','umbrella','cloud','regn','pöl','paraply','moln','regnrock','vått'],
+  'eating-fruit':    ['fruit','apple','banana','berry','orange','frukt','äpple','banan','bär','apelsin'],
+  'saying-please':   ['please','thank','manners','snälla','tack','artighet','säga','varsågod'],
+  'meeting-new-baby':['baby','sibling','brother','sister','bebis','syskon','bror','syster','nyfödd','liten'],
+  'being-brave':     ['brave','courage','try','new','modig','mod','försöka','ny','klara','rädd','våga'],
+  'saying-sorry':    ['sorry','apologise','apologize','forgive','förlåt','ledsen','förlåtelse','be om förlåtelse'],
 };
 
 function getIllustration(topic = '', pageText = '') {
