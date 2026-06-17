@@ -76,10 +76,160 @@ const GIFT_DEFAULT = {
 };
 
 // ── Image layer (Pollinations, free, keyless) ───────────────────
+// imageUrl is kept pure -- builds the URL only, no fetching here.
 function imageUrl(prompt, style, seed) {
   const full = `${prompt}, ${style} children's picture book illustration, soft warm lighting, full bleed, no text, no words, no letters`;
   const enc = encodeURIComponent(full);
   return `https://image.pollinations.ai/prompt/${enc}?width=768&height=768&seed=${seed}&nologo=true`;
+}
+
+// ── Sequential image queue ────────────────────────────────────────
+// Pollinations anonymous tier: 1 request per 15 seconds.
+// All page images register here. The queue fires them one at a time,
+// 15.5s apart, with up to 2 retries per image (2s between retries).
+// Blob size < 50KB = rate-limit placeholder, triggers retry.
+// FLAG: MIN_BLOB_BYTES = 50000. Real 768x768 images are 150KB-600KB.
+// If you ever see a real image swapped for the gold fallback, lower this.
+const MIN_BLOB_BYTES = 50000;
+const QUEUE_DELAY_MS = 15500;   // gap between sequential requests
+const RETRY_DELAY_MS = 2000;    // wait before retry
+const MAX_RETRIES = 2;
+
+class ImageQueue {
+  constructor() {
+    this._queue = [];
+    this._running = false;
+  }
+
+  enqueue(url, callback) {
+    this._queue.push({ url, callback });
+    if (!this._running) this._run();
+  }
+
+  clear() {
+    this._queue = [];
+    this._running = false;
+  }
+
+  async _run() {
+    this._running = true;
+    while (this._queue.length > 0) {
+      const { url, callback } = this._queue.shift();
+      await this._fetchWithRetry(url, callback, 0);
+      if (this._queue.length > 0) {
+        await new Promise(r => setTimeout(r, QUEUE_DELAY_MS));
+      }
+    }
+    this._running = false;
+  }
+
+  async _fetchWithRetry(url, callback, attempt) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`http ${res.status}`);
+      const blob = await res.blob();
+      if (blob.size < MIN_BLOB_BYTES) throw new Error(`placeholder (${blob.size}b)`);
+      const objectUrl = URL.createObjectURL(blob);
+      callback({ objectUrl, failed: false });
+    } catch (e) {
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        return this._fetchWithRetry(url, callback, attempt + 1);
+      }
+      callback({ objectUrl: null, failed: true });
+    }
+  }
+}
+
+// One queue instance lives for the lifetime of the app.
+const imageQueue = new ImageQueue();
+
+// Call this whenever a new book is generated -- clears any in-flight
+// requests from the previous book so old images don't bleed through.
+function resetImageQueue() {
+  imageQueue.clear();
+}
+
+// ── Gold SVG fallback ─────────────────────────────────────────────
+// Shown when all retries fail. A small moon -- feels intentional, not broken.
+const FALLBACK_SVG = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
+  <rect width='100' height='100' fill='%23f5f0e8'/>
+  <path d='M50 18 C34 18 22 30 22 46 C22 62 34 74 50 74 C44 68 40 58 40 46 C40 30 50 20 64 18 C60 18 55 18 50 18Z' fill='%23c9a84c' opacity='0.85'/>
+  <circle cx='68' cy='28' r='3' fill='%23c9a84c' opacity='0.5'/>
+  <circle cx='72' cy='40' r='2' fill='%23c9a84c' opacity='0.4'/>
+  <circle cx='60' cy='22' r='1.5' fill='%23c9a84c' opacity='0.4'/>
+</svg>`;
+
+// ── PageImage component ───────────────────────────────────────────
+// Replaces the bare <img> in CoverPage and StoryPage.
+// - Pulses warm paper colour while queued/loading
+// - Fades in when image arrives
+// - Shows gold moon fallback if all retries fail
+// - Displays story text immediately (text is never blocked by this)
+function PageImage({ prompt, style, seed, pageIndex }) {
+  const [state, setState] = useState('loading'); // 'loading' | 'loaded' | 'failed'
+  const [src, setSrc] = useState(null);
+  const mountedRef = useRef(true);
+  const objectUrlRef = useRef(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    setState('loading');
+    setSrc(null);
+
+    const url = imageUrl(prompt, style, seed);
+
+    imageQueue.enqueue(url, ({ objectUrl, failed }) => {
+      if (!mountedRef.current) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      if (failed) {
+        setState('failed');
+      } else {
+        objectUrlRef.current = objectUrl;
+        setSrc(objectUrl);
+        setState('loaded');
+      }
+    });
+
+    return () => {
+      mountedRef.current = false;
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    };
+  // pageIndex in deps ensures re-fetch if page identity changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt, style, seed, pageIndex]);
+
+  if (state === 'failed') {
+    return (
+      <img
+        src={FALLBACK_SVG}
+        alt=""
+        className="page-img"
+        style={{ objectFit: 'contain', padding: 24 }}
+      />
+    );
+  }
+
+  if (state === 'loading') {
+    return (
+      <div className="page-img page-img-loading">
+        <div className="img-drawing-label">drawing your page...</div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt=""
+      className="page-img page-img-ready"
+    />
+  );
 }
 
 export default function StorybookStudio() {
@@ -114,6 +264,7 @@ export default function StorybookStudio() {
     setErr("");
     setBook(null);
     setPage(0);
+    resetImageQueue();
 
     const ndText = cfg.nd.length
       ? ND_SUPPORTS.filter((s) => cfg.nd.includes(s.id)).map((s) => s.label).join("; ")
@@ -322,7 +473,12 @@ export default function StorybookStudio() {
 function CoverPage({ book, cfg, seed, print }) {
   return (
     <div className={`book-page cover-page ${print ? "print-page" : ""}`}>
-      <img src={imageUrl(book.cover.image_prompt, cfg.style, seed)} alt="" className="page-img" />
+      <PageImage
+        prompt={book.cover.image_prompt}
+        style={cfg.style}
+        seed={seed}
+        pageIndex={0}
+      />
       <div className="cover-overlay">
         <h2 className="cover-title">{book.title}</h2>
         {book.cover.subtitle && <p className="cover-sub">{book.cover.subtitle}</p>}
@@ -336,7 +492,12 @@ function StoryPage({ p, cfg, seed, n, print }) {
   const showStrip = cfg.nd.includes("schedule");
   return (
     <div className={`book-page ${print ? "print-page" : ""}`}>
-      <img src={imageUrl(p.image_prompt, cfg.style, seed + n)} alt="" className="page-img" />
+      <PageImage
+        prompt={p.image_prompt}
+        style={cfg.style}
+        seed={seed + n}
+        pageIndex={n}
+      />
       <div className="page-text-box">
         <p className="page-text">{p.text}</p>
         {showStrip && (
@@ -503,7 +664,31 @@ function Styles() {
       .cover-sub { font-family: 'DM Mono', monospace; font-size: 13px; color: ${GOLD}; margin: 8px 0 0; }
       .cover-for { font-family: 'DM Mono', monospace; font-size: 12px; color: ${PAPER}; opacity: .85; margin: 4px 0 0; }
 
-      .pulse { animation: pulse 1.3s ease-in-out infinite; }
+      .page-img-loading {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        background: ${PAPER};
+        animation: imgPulse 2s ease-in-out infinite;
+        display: flex; align-items: flex-end; justify-content: center;
+        padding-bottom: 72px;
+      }
+      @keyframes imgPulse {
+        0%,100% { opacity: 0.55; }
+        50% { opacity: 0.85; }
+      }
+      .img-drawing-label {
+        font-family: 'DM Mono', monospace; font-size: 11px;
+        letter-spacing: 1.5px; text-transform: uppercase;
+        color: ${INK}; opacity: 0.45;
+      }
+      .page-img-ready {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        object-fit: cover;
+        animation: imgFadeIn 0.9s ease both;
+      }
+      @keyframes imgFadeIn {
+        from { opacity: 0; transform: scale(1.01); }
+        to   { opacity: 1; transform: scale(1); }
+      }
       @keyframes pulse { 0%,100%{opacity:.35;transform:scale(.9)} 50%{opacity:1;transform:scale(1.1)} }
 
       .print-only { display: none; }
