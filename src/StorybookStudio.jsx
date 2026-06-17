@@ -75,160 +75,151 @@ const GIFT_DEFAULT = {
   dedication: "",
 };
 
-// ── Image layer (Pollinations, free, keyless) ───────────────────
-// imageUrl is kept pure -- builds the URL only, no fetching here.
-function imageUrl(prompt, style, seed) {
-  const full = `${prompt}, ${style} children's picture book illustration, soft warm lighting, full bleed, no text, no words, no letters`;
-  const enc = encodeURIComponent(full);
-  return `https://image.pollinations.ai/prompt/${enc}?width=768&height=768&seed=${seed}&nologo=true`;
+// ── Decorative illustration (inline SVG, no fetch, instant) ──────
+// One reusable component used on every page.
+// seed drives which arrangement of elements renders -- same book = same look.
+// artStyle drives the colour palette.
+
+const PALETTES = {
+  "Bold flat vector":      { sky:"#74B9FF", ground:"#55EFC4", sun:"#FDCB6E", star1:"#FF6B6B", star2:"#A29BFE", star3:"#FF9F43", cloud:"#ffffff", rainbow:["#FF6B6B","#FF9F43","#FDCB6E","#55EFC4","#74B9FF","#A29BFE"], stroke:"#1a1a2e", sw:3 },
+  "Watercolour":           { sky:"#B8DEF5", ground:"#C8EAB5", sun:"#FDE8C8", star1:"#F8B4B4", star2:"#D4B8F5", star3:"#FAD4A0", cloud:"#fefefe", rainbow:["#F8B4B4","#FAD4A0","#FDE8C8","#C8EAB5","#B8DEF5","#D4B8F5"], stroke:"#6b7c8d", sw:2 },
+  "Crayon child-like":     { sky:"#9BB7D4", ground:"#7BC8A4", sun:"#F5D76E", star1:"#E8846A", star2:"#C8A8D4", star3:"#E8846A", cloud:"#FFF8F0", rainbow:["#E8846A","#F5D76E","#7BC8A4","#9BB7D4","#C8A8D4","#E8C8A0"], stroke:"#4a3728", sw:2.5 },
+  "Classic fairytale":     { sky:"#2980B9", ground:"#27AE60", sun:"#F39C12", star1:"#C0392B", star2:"#8E44AD", star3:"#F39C12", cloud:"#ECF0F1", rainbow:["#C0392B","#E67E22","#F1C40F","#27AE60","#2980B9","#8E44AD"], stroke:"#2C3E50", sw:3 },
+  "Studio-Ghibli soft":    { sky:"#B8D4E8", ground:"#A8C8A0", sun:"#E8C8A0", star1:"#E8D5B7", star2:"#C8B8D4", star3:"#D4C8A8", cloud:"#F5F0E8", rainbow:["#E8B8A8","#E8D5B7","#E8C8A0","#A8C8A0","#B8D4E8","#C8B8D4"], stroke:"#5a6e5a", sw:2 },
+  "Pop art":               { sky:"#ffffff", ground:"#FFEA00", sun:"#FF6D00", star1:"#FF1744", star2:"#00E5FF", star3:"#FF6D00", cloud:"#ffffff", rainbow:["#FF1744","#FF6D00","#FFEA00","#00E5FF","#0091EA","#D500F9"], stroke:"#000000", sw:4 },
+  "Minimalist line":       { sky:"#F5F0E8", ground:"#F5F0E8", sun:"#c9a84c", star1:"#b85c38", star2:"#3a7d74", star3:"#c9a84c", cloud:"#F5F0E8", rainbow:["#c9a84c","#b85c38","#3a7d74","#c9a84c","#b85c38","#3a7d74"], stroke:"#0d0c0a", sw:2 },
+  "Maximalist pattern":    { sky:"#74B9FF", ground:"#55EFC4", sun:"#FDCB6E", star1:"#FF6B6B", star2:"#A29BFE", star3:"#FF9F43", cloud:"#ffffff", rainbow:["#FF6B6B","#FF9F43","#FDCB6E","#55EFC4","#74B9FF","#A29BFE"], stroke:"#1a1a2e", sw:3 },
+  "Paper-cut collage":     { sky:"#74B9FF", ground:"#55EFC4", sun:"#FDCB6E", star1:"#FF6B6B", star2:"#A29BFE", star3:"#FF9F43", cloud:"#fefefe", rainbow:["#FF6B6B","#FF9F43","#FDCB6E","#55EFC4","#74B9FF","#A29BFE"], stroke:"none",   sw:0 },
+  "Retro 70s storybook":   { sky:"#7BA5B8", ground:"#8FB87A", sun:"#E8C97A", star1:"#D4845A", star2:"#7BA5B8", star3:"#E8C97A", cloud:"#EDE0CC", rainbow:["#D4845A","#E8C97A","#8FB87A","#7BA5B8","#A09060","#C8A878"], stroke:"#3d2b1a", sw:2.5 },
+};
+
+const DEFAULT_PALETTE = PALETTES["Bold flat vector"];
+
+function getPalette(artStyle) {
+  return PALETTES[artStyle] || DEFAULT_PALETTE;
 }
 
-// ── Sequential image queue ────────────────────────────────────────
-// Pollinations anonymous tier: 1 request per 15 seconds.
-// All page images register here. The queue fires them one at a time,
-// 15.5s apart, with up to 2 retries per image (2s between retries).
-// Blob size < 50KB = rate-limit placeholder, triggers retry.
-// FLAG: MIN_BLOB_BYTES = 50000. Real 768x768 images are 150KB-600KB.
-// If you ever see a real image swapped for the gold fallback, lower this.
-const MIN_BLOB_BYTES = 50000;
-const QUEUE_DELAY_MS = 15500;   // gap between sequential requests
-const RETRY_DELAY_MS = 2000;    // wait before retry
-const MAX_RETRIES = 2;
-
-class ImageQueue {
-  constructor() {
-    this._queue = [];
-    this._running = false;
-  }
-
-  enqueue(url, callback) {
-    this._queue.push({ url, callback });
-    if (!this._running) this._run();
-  }
-
-  clear() {
-    this._queue = [];
-    this._running = false;
-  }
-
-  async _run() {
-    this._running = true;
-    while (this._queue.length > 0) {
-      const { url, callback } = this._queue.shift();
-      await this._fetchWithRetry(url, callback, 0);
-      if (this._queue.length > 0) {
-        await new Promise(r => setTimeout(r, QUEUE_DELAY_MS));
-      }
-    }
-    this._running = false;
-  }
-
-  async _fetchWithRetry(url, callback, attempt) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`http ${res.status}`);
-      const blob = await res.blob();
-      if (blob.size < MIN_BLOB_BYTES) throw new Error(`placeholder (${blob.size}b)`);
-      const objectUrl = URL.createObjectURL(blob);
-      callback({ objectUrl, failed: false });
-    } catch (e) {
-      if (attempt < MAX_RETRIES) {
-        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-        return this._fetchWithRetry(url, callback, attempt + 1);
-      }
-      callback({ objectUrl: null, failed: true });
-    }
-  }
+// Tiny seeded pseudo-random -- same seed always gives same layout variation
+function seededRand(seed, index) {
+  const x = Math.sin(seed * 9301 + index * 49297 + 233720) * 10000;
+  return x - Math.floor(x);
 }
 
-// One queue instance lives for the lifetime of the app.
-const imageQueue = new ImageQueue();
+function StoryIllustration({ seed = 1, artStyle = "Bold flat vector" }) {
+  const p = getPalette(artStyle);
+  const r = (i) => seededRand(seed, i);
 
-// Call this whenever a new book is generated -- clears any in-flight
-// requests from the previous book so old images don't bleed through.
-function resetImageQueue() {
-  imageQueue.clear();
-}
+  // Star positions -- 5 stars scattered across upper area
+  const stars = [
+    { cx: 60 + r(0) * 40,  cy: 30 + r(1) * 30, r: 6 + r(2) * 5,  fill: p.star1 },
+    { cx: 180 + r(3) * 40, cy: 20 + r(4) * 25, r: 8 + r(5) * 5,  fill: p.star2 },
+    { cx: 320 + r(6) * 40, cy: 35 + r(7) * 30, r: 5 + r(8) * 5,  fill: p.star3 },
+    { cx: 430 + r(9) * 40, cy: 25 + r(10) * 25,r: 7 + r(11) * 4, fill: p.star1 },
+    { cx: 540 + r(12)* 30, cy: 40 + r(13) * 25,r: 5 + r(14) * 5, fill: p.star2 },
+  ];
 
-// ── Gold SVG fallback ─────────────────────────────────────────────
-// Shown when all retries fail. A small moon -- feels intentional, not broken.
-const FALLBACK_SVG = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
-  <rect width='100' height='100' fill='%23f5f0e8'/>
-  <path d='M50 18 C34 18 22 30 22 46 C22 62 34 74 50 74 C44 68 40 58 40 46 C40 30 50 20 64 18 C60 18 55 18 50 18Z' fill='%23c9a84c' opacity='0.85'/>
-  <circle cx='68' cy='28' r='3' fill='%23c9a84c' opacity='0.5'/>
-  <circle cx='72' cy='40' r='2' fill='%23c9a84c' opacity='0.4'/>
-  <circle cx='60' cy='22' r='1.5' fill='%23c9a84c' opacity='0.4'/>
-</svg>`;
+  // Rainbow arc -- centre shifts slightly per seed
+  const rainbowCx = 280 + r(20) * 40;
+  const rainbowCy = 340;
+  const rainbowRadii = [220, 195, 170, 145, 120, 95];
 
-// ── PageImage component ───────────────────────────────────────────
-// Replaces the bare <img> in CoverPage and StoryPage.
-// - Pulses warm paper colour while queued/loading
-// - Fades in when image arrives
-// - Shows gold moon fallback if all retries fail
-// - Displays story text immediately (text is never blocked by this)
-function PageImage({ prompt, style, seed, pageIndex }) {
-  const [state, setState] = useState('loading'); // 'loading' | 'loaded' | 'failed'
-  const [src, setSrc] = useState(null);
-  const mountedRef = useRef(true);
-  const objectUrlRef = useRef(null);
+  // Cloud positions -- 2 clouds
+  const clouds = [
+    { cx: 100 + r(30) * 60, cy: 90 + r(31) * 20 },
+    { cx: 420 + r(32) * 60, cy: 70 + r(33) * 20 },
+  ];
 
-  useEffect(() => {
-    mountedRef.current = true;
-    setState('loading');
-    setSrc(null);
+  // Moon -- upper right, slight position variation
+  const moonCx = 520 + r(40) * 20;
+  const moonCy = 55 + r(41) * 20;
 
-    const url = imageUrl(prompt, style, seed);
-
-    imageQueue.enqueue(url, ({ objectUrl, failed }) => {
-      if (!mountedRef.current) {
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-        return;
-      }
-      if (failed) {
-        setState('failed');
-      } else {
-        objectUrlRef.current = objectUrl;
-        setSrc(objectUrl);
-        setState('loaded');
-      }
-    });
-
-    return () => {
-      mountedRef.current = false;
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-    };
-  // pageIndex in deps ensures re-fetch if page identity changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt, style, seed, pageIndex]);
-
-  if (state === 'failed') {
-    return (
-      <img
-        src={FALLBACK_SVG}
-        alt=""
-        className="page-img"
-        style={{ objectFit: 'contain', padding: 24 }}
-      />
-    );
-  }
-
-  if (state === 'loading') {
-    return (
-      <div className="page-img page-img-loading">
-        <div className="img-drawing-label">drawing your page...</div>
-      </div>
-    );
-  }
+  const sw = p.sw;
+  const stroke = p.stroke;
 
   return (
-    <img
-      src={src}
-      alt=""
-      className="page-img page-img-ready"
-    />
+    <svg
+      viewBox="0 0 600 600"
+      xmlns="http://www.w3.org/2000/svg"
+      className="page-img"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+      aria-hidden="true"
+    >
+      {/* Sky background */}
+      <rect width="600" height="600" fill={p.sky} />
+
+      {/* Ground strip */}
+      <ellipse cx="300" cy="620" rx="380" ry="120" fill={p.ground} />
+
+      {/* Sun */}
+      <circle cx={80 + r(50)*30} cy={80 + r(51)*20} r="52" fill={p.sun}
+        stroke={stroke} strokeWidth={sw} />
+      {/* Sun rays */}
+      {[0,45,90,135,180,225,270,315].map((angle, i) => {
+        const rad = angle * Math.PI / 180;
+        const x1 = (80 + r(50)*30) + Math.cos(rad)*58;
+        const y1 = (80 + r(51)*20) + Math.sin(rad)*58;
+        const x2 = (80 + r(50)*30) + Math.cos(rad)*72;
+        const y2 = (80 + r(51)*20) + Math.sin(rad)*72;
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
+          stroke={p.sun} strokeWidth={sw+1} strokeLinecap="round" />;
+      })}
+
+      {/* Moon */}
+      <circle cx={moonCx} cy={moonCy} r="30" fill={p.star3}
+        stroke={stroke} strokeWidth={sw} />
+      <circle cx={moonCx+12} cy={moonCy-6} r="22" fill={p.sky} />
+
+      {/* Rainbow arcs */}
+      {rainbowRadii.map((rad, i) => (
+        <path key={i}
+          d={`M ${rainbowCx - rad} ${rainbowCy} A ${rad} ${rad} 0 0 1 ${rainbowCx + rad} ${rainbowCy}`}
+          fill="none" stroke={p.rainbow[i]} strokeWidth={14} strokeLinecap="round"
+          opacity="0.88"
+        />
+      ))}
+
+      {/* Clouds */}
+      {clouds.map((c, i) => (
+        <g key={i}>
+          <ellipse cx={c.cx}    cy={c.cy}    rx={38} ry={22} fill={p.cloud}
+            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+          <ellipse cx={c.cx-24} cy={c.cy+6}  rx={26} ry={18} fill={p.cloud}
+            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+          <ellipse cx={c.cx+24} cy={c.cy+6}  rx={26} ry={18} fill={p.cloud}
+            stroke={stroke} strokeWidth={sw} opacity="0.92"/>
+        </g>
+      ))}
+
+      {/* Stars (4-pointed sparkle shape) */}
+      {stars.map((s, i) => {
+        const sr = s.r;
+        const pts = [
+          `${s.cx},${s.cy - sr}`,
+          `${s.cx + sr*0.3},${s.cy - sr*0.3}`,
+          `${s.cx + sr},${s.cy}`,
+          `${s.cx + sr*0.3},${s.cy + sr*0.3}`,
+          `${s.cx},${s.cy + sr}`,
+          `${s.cx - sr*0.3},${s.cy + sr*0.3}`,
+          `${s.cx - sr},${s.cy}`,
+          `${s.cx - sr*0.3},${s.cy - sr*0.3}`,
+        ].join(" ");
+        return (
+          <polygon key={i} points={pts} fill={s.fill}
+            stroke={stroke} strokeWidth={sw > 0 ? sw - 0.5 : 0}
+            strokeLinejoin="round" />
+        );
+      })}
+
+      {/* Small scatter dots for warmth -- bottom ground area */}
+      {[0,1,2,3,4,5].map(i => (
+        <circle key={i}
+          cx={80 + r(60+i)*440} cy={520 + r(66+i)*50}
+          r={5 + r(72+i)*6}
+          fill={p.rainbow[i % 6]} opacity="0.7"
+          stroke={stroke} strokeWidth={sw > 0 ? 1 : 0}
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -264,7 +255,6 @@ export default function StorybookStudio() {
     setErr("");
     setBook(null);
     setPage(0);
-    resetImageQueue();
 
     const ndText = cfg.nd.length
       ? ND_SUPPORTS.filter((s) => cfg.nd.includes(s.id)).map((s) => s.label).join("; ")
@@ -473,12 +463,7 @@ export default function StorybookStudio() {
 function CoverPage({ book, cfg, seed, print }) {
   return (
     <div className={`book-page cover-page ${print ? "print-page" : ""}`}>
-      <PageImage
-        prompt={book.cover.image_prompt}
-        style={cfg.style}
-        seed={seed}
-        pageIndex={0}
-      />
+      <StoryIllustration seed={seed} artStyle={cfg.style} />
       <div className="cover-overlay">
         <h2 className="cover-title">{book.title}</h2>
         {book.cover.subtitle && <p className="cover-sub">{book.cover.subtitle}</p>}
@@ -492,12 +477,7 @@ function StoryPage({ p, cfg, seed, n, print }) {
   const showStrip = cfg.nd.includes("schedule");
   return (
     <div className={`book-page ${print ? "print-page" : ""}`}>
-      <PageImage
-        prompt={p.image_prompt}
-        style={cfg.style}
-        seed={seed + n}
-        pageIndex={n}
-      />
+      <StoryIllustration seed={seed + n} artStyle={cfg.style} />
       <div className="page-text-box">
         <p className="page-text">{p.text}</p>
         {showStrip && (
@@ -664,31 +644,7 @@ function Styles() {
       .cover-sub { font-family: 'DM Mono', monospace; font-size: 13px; color: ${GOLD}; margin: 8px 0 0; }
       .cover-for { font-family: 'DM Mono', monospace; font-size: 12px; color: ${PAPER}; opacity: .85; margin: 4px 0 0; }
 
-      .page-img-loading {
-        position: absolute; inset: 0; width: 100%; height: 100%;
-        background: ${PAPER};
-        animation: imgPulse 2s ease-in-out infinite;
-        display: flex; align-items: flex-end; justify-content: center;
-        padding-bottom: 72px;
-      }
-      @keyframes imgPulse {
-        0%,100% { opacity: 0.55; }
-        50% { opacity: 0.85; }
-      }
-      .img-drawing-label {
-        font-family: 'DM Mono', monospace; font-size: 11px;
-        letter-spacing: 1.5px; text-transform: uppercase;
-        color: ${INK}; opacity: 0.45;
-      }
-      .page-img-ready {
-        position: absolute; inset: 0; width: 100%; height: 100%;
-        object-fit: cover;
-        animation: imgFadeIn 0.9s ease both;
-      }
-      @keyframes imgFadeIn {
-        from { opacity: 0; transform: scale(1.01); }
-        to   { opacity: 1; transform: scale(1); }
-      }
+      .pulse { animation: pulse 1.3s ease-in-out infinite; }
       @keyframes pulse { 0%,100%{opacity:.35;transform:scale(.9)} 50%{opacity:1;transform:scale(1.1)} }
 
       .print-only { display: none; }
