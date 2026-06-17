@@ -1,3 +1,6 @@
+// STATE: v2 Feature 2 -- art style CSS filters on PNG illustrations
+// Repo: https://github.com/shamathakur77/little-story-maker
+// Do not touch: api/story.js, form inputs, Ko-fi footer, CSS layout
 import React, { useState, useRef, useEffect } from "react";
 
 // ── Design tokens (Shama's system) ──────────────────────────────
@@ -96,6 +99,20 @@ function getIllustration(topic = '', pageText = '') {
   return null; // no match -- use SVG fallback
 }
 
+// Art style CSS filters applied to PNG illustrations
+const STYLE_FILTERS = {
+  'Bold flat vector':    'none',
+  'Watercolour':         'saturate(0.7) brightness(1.05) contrast(0.9)',
+  'Crayon child-like':   'saturate(0.8) contrast(0.95) sepia(0.15)',
+  'Classic fairytale':   'saturate(1.2) contrast(1.1) hue-rotate(10deg)',
+  'Studio-Ghibli soft':  'saturate(0.65) brightness(1.08) contrast(0.88)',
+  'Pop art':             'saturate(1.8) contrast(1.3)',
+  'Minimalist line':     'grayscale(0.6) contrast(1.1)',
+  'Maximalist pattern':  'saturate(1.4) contrast(1.05)',
+  'Paper-cut collage':   'saturate(0.9) brightness(1.03)',
+  'Retro 70s storybook': 'saturate(0.75) sepia(0.25) brightness(0.97)',
+};
+
 // SVG fallback -- kept intact, used when no keyword matches
 const PALETTES = {
   "Bold flat vector":      { sky:"#74B9FF", ground:"#55EFC4", sun:"#FDCB6E", star1:"#FF6B6B", star2:"#A29BFE", star3:"#FF9F43", cloud:"#ffffff", rainbow:["#FF6B6B","#FF9F43","#FDCB6E","#55EFC4","#74B9FF","#A29BFE"], stroke:"#1a1a2e", sw:3 },
@@ -185,15 +202,24 @@ function StoryIllustration({ seed = 1, artStyle = "Bold flat vector" }) {
 
 // ── PageIllustration ──────────────────────────────────────────────
 // Tries keyword match first. Falls back to decorative SVG.
+// imgFailed state ensures broken PNGs degrade gracefully -- no broken icons.
 function PageIllustration({ topic, pageText, seed, artStyle }) {
   const scene = getIllustration(topic, pageText);
-  if (scene) {
+  const [imgFailed, setImgFailed] = useState(false);
+
+  if (scene && !imgFailed) {
     return (
       <img
         src={`/${scene}.png`}
         alt={scene.replace(/-/g, ' ')}
         className="page-img"
-        style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+        style={{
+          objectFit: 'cover',
+          width: '100%',
+          height: '100%',
+          filter: STYLE_FILTERS[artStyle] || 'none',
+        }}
+        onError={() => setImgFailed(true)}
       />
     );
   }
