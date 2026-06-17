@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 // ── Design tokens (Shama's system) ──────────────────────────────
 const INK = "#0d0c0a";
@@ -117,47 +117,32 @@ export default function StorybookStudio() {
 
     const ndText = cfg.nd.length
       ? ND_SUPPORTS.filter((s) => cfg.nd.includes(s.id)).map((s) => s.label).join("; ")
-      : "none specified";
-    const ageNote = AGE_BANDS.find((a) => a.id === cfg.age)?.note;
+      : "predictable structure; literal language";
 
-    const sys = `You are a gentle, expert children's picture-book author who specialises in neurodivergent-friendly behavioural stories. You write calm, predictable, literal stories that help young children learn everyday habits. You never use idioms, sarcasm, or scary surprises. You name emotions plainly. Output ONLY valid JSON, no markdown, no preamble.`;
-
-    const user = `Write a children's picture book.
-
-Child's name: ${cfg.childName}
-Lesson the child learns: ${cfg.lesson}
-Age band: ${cfg.age} (${ageNote})
-Tone: ${cfg.tone}
-Family shape: ${cfg.family}
-Language: ${cfg.lang}${cfg.lang.startsWith("Bilingual") ? " — give BOTH languages on each page, English line first then the other language below it." : ""}
-Neurodivergent supports to apply: ${ndText}
-Representation: the child and family have ${cfg.skinTone} skin; show this warmly and naturally in the image prompts.${cfg.expat ? " The family is an expat / two-cultures family; gently weave in a small two-cultures detail (e.g. a word from home, a home-country food, 'at school we say X, at home we say Y')." : ""}
-
-Make exactly 10 inside pages plus a cover. Each page: ONE simple scene, 1–3 short sentences appropriate to the age band. The story must have a clear, calm beginning-middle-end where ${cfg.childName} succeeds at the lesson and feels proud.
-
-For each page write an "image_prompt": a vivid visual description of the SCENE ONLY (setting, characters doing the action, mood). Do NOT mention art style in the image_prompt (that is added separately). Keep image prompts free of any text/words/signs.
-
-Return JSON exactly in this shape:
-{
-  "title": "short warm title",
-  "cover": { "image_prompt": "...", "subtitle": "one gentle line" },
-  "pages": [ { "text": "page text", "image_prompt": "..." } ]
-}`;
-
+    // The proxy owns the three-loop logic. We just send the structured brief.
     try {
       const res = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: `${sys}\n\n${user}` }),
+        body: JSON.stringify({
+          childName: cfg.childName,
+          lesson: cfg.lesson,
+          age: cfg.age,
+          tone: cfg.tone,
+          family: cfg.family,
+          lang: cfg.lang,
+          style: cfg.style,
+          skinTone: cfg.skinTone,
+          expat: cfg.expat,
+          ndText,
+        }),
       });
       if (!res.ok) throw new Error("api");
       const data = await res.json();
-      const raw = data.content.map((b) => (b.type === "text" ? b.text : "")).join("");
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setBook(parsed);
+      if (!data.book) throw new Error("nobook");
+      setBook(data.book);
     } catch (e) {
-      setErr("The story didn't come through. Tap Generate to try again.");
+      setErr("Let's try that again — the story is thinking.");
     } finally {
       setLoading(false);
     }
@@ -276,7 +261,7 @@ Return JSON exactly in this shape:
           </Field>
 
           <button onClick={generate} disabled={loading} style={primaryBtn}>
-            {loading ? "Writing the story…" : book ? "Make a new one" : "Make the book"}
+            {loading ? "Writing tonight's story…" : book ? "Make another story" : "Make tonight's story"}
           </button>
           {err && <p style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: RUST, marginTop: 10 }}>{err}</p>}
         </div>
@@ -295,14 +280,7 @@ Return JSON exactly in this shape:
             </div>
           )}
 
-          {loading && (
-            <div style={emptyState}>
-              <div className="pulse" style={{ fontSize: 46, marginBottom: 8 }}>✶</div>
-              <p style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, color: INK, opacity: 0.7 }}>
-                Writing {cfg.childName || "the"}'s story…
-              </p>
-            </div>
-          )}
+          {loading && <LoadingState name={cfg.childName} />}
 
           {book && (
             <>
@@ -387,10 +365,57 @@ function DedicationPage({ cfg }) {
 }
 
 // ── Small UI atoms ──────────────────────────────────────────────
+function LoadingState({ name }) {
+  const child = name || "your little one";
+  const phases = [
+    `Dreaming up ${child}'s story…`,
+    "Reading it back with a careful heart…",
+    "Tucking in the warmth, like a grandmother would…",
+  ];
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    // ~7s per phase ≈ the three loops; gentle, not a spinner race
+    const t = setInterval(() => setI((p) => (p + 1) % phases.length), 7000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div style={emptyState}>
+      <div className="pulse" style={{ fontSize: 46, marginBottom: 12 }}>✶</div>
+      <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: INK, margin: 0 }}>
+        {phases[i]}
+      </p>
+      <p style={{ fontFamily: "'DM Mono', monospace", fontSize: 11.5, color: INK, opacity: 0.55, marginTop: 8 }}>
+        good stories take a breath
+      </p>
+    </div>
+  );
+}
+
 function Shell({ children }) {
   return (
-    <div style={{ minHeight: "100vh", background: PAPER, padding: "28px 18px 60px" }}>
+    <div style={{ minHeight: "100vh", background: PAPER, padding: "28px 18px 40px" }}>
       <div style={{ maxWidth: 1080, margin: "0 auto" }}>{children}</div>
+      <footer className="no-print" style={{
+        maxWidth: 1080, margin: "44px auto 0", paddingTop: 20,
+        borderTop: `1px solid ${INK}22`, textAlign: "center",
+        fontFamily: "'DM Mono', monospace", fontSize: 12, color: INK,
+      }}>
+        <p style={{ opacity: 0.7, margin: "0 0 8px" }}>
+          made by hand for small humans, by Shama
+        </p>
+        <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+          <a href="https://ko-fi.com/shamathakur" target="_blank" rel="noopener noreferrer"
+            style={{ color: RUST, textDecoration: "none", fontWeight: 500 }}>
+            ♡ buy me a ko-fi
+          </a>
+          <a href="https://www.instagram.com/shama_thakur77" target="_blank" rel="noopener noreferrer"
+            style={{ color: INK, textDecoration: "none", opacity: 0.7 }}>instagram</a>
+          <a href="https://pinterest.com/thkrshama" target="_blank" rel="noopener noreferrer"
+            style={{ color: INK, textDecoration: "none", opacity: 0.7 }}>pinterest</a>
+          <a href="https://shamathakur.substack.com" target="_blank" rel="noopener noreferrer"
+            style={{ color: INK, textDecoration: "none", opacity: 0.7 }}>substack</a>
+        </div>
+      </footer>
     </div>
   );
 }
